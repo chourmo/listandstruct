@@ -17,12 +17,14 @@ pandas = "*"
 pyarrow = "*"
 numpy = "*"
 pytest = "*"
+pre-commit = "*"
 
 [tool.pixi.pypi-dependencies]
 listandstruct = { path = ".", editable = true }
 
 [tool.pixi.tasks]
 test = "pytest -q"
+hooks = "pre-commit run --all-files"
 
 [build-system]
 build-backend = "hatchling.build"
