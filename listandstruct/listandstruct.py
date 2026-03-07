@@ -9,6 +9,8 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.compute as pc
 
+__all__ = ["struct_array", "list_array", "ArrowStructArray", "ArrowListArray"]
+
 
 def struct_array(df: pd.DataFrame) -> pa.Array:
     """
@@ -35,7 +37,6 @@ def struct_array(df: pd.DataFrame) -> pa.Array:
     The function preserves the DataFrame index in the returned Series.
     Column dtypes are converted to their PyArrow equivalents automatically.
     """
-    """Convert dataframe to a StructArray"""
     names = list(df.columns)
     values = [pa.array(df[col], from_pandas=True) for col in names]
     stype = pa.struct({col: df[col].dtype.pyarrow_dtype for col in df.columns})
@@ -54,7 +55,7 @@ class ArrowStructArray:
 
     @staticmethod
     def _validate(obj):
-        """Validate obj is a series with pyrrow.list_ data."""
+        """Validate obj is a series with pyarrow.list_ data."""
         if not isinstance(obj, pd.Series):
             raise AttributeError("Data must be a pd.Series")
         if not isinstance(obj.dtype.pyarrow_dtype, pa.StructType):
@@ -94,7 +95,7 @@ def list_array(
         a ListArray Series with same type as df
     """
     if ids is None and offsets is None:
-        raise ValueError("Reference or offsets must not be None")
+        raise ValueError("ids or offsets must not be None")
 
     if isinstance(df, pd.Series):
         array = pa.array(df, from_pandas=True)
@@ -124,7 +125,7 @@ def list_array(
         elif ids is not None:
             index = ids.drop_duplicates(keep="first")
         else:
-            raise ValueError("Nither ids and offsets can be noth None")
+            raise ValueError("Neither ids nor offsets can be None")
         return pd.Series(data=array, dtype=dtype, index=index.values)
 
     return pd.Series(data=array, dtype=dtype)
@@ -155,15 +156,17 @@ def _offsets(df: pd.Series | pd.DataFrame) -> pa.Array:
 
 
 def _is_list_series(df: pd.Series) -> bool:
-    """Test is df is a Series of ListArrays."""
+    """Test if df is a Series of ListArrays."""
     if isinstance(df, pd.Series) and isinstance(df.dtype, pd.ArrowDtype):
         return isinstance(df.dtype.pyarrow_dtype, pa.ListType)
     else:
         return False
 
 
-def _fill_nulls(array: pa.Array, dummy=None) -> pa.Array:
-    """Return an array with a dummy values instead of None, and the dummy value."""
+def _fill_nulls(
+    array: pa.Array, dummy: int | None = None
+) -> tuple[pa.Array, int | None]:
+    """Return an array with a dummy value instead of None, and the dummy value."""
     # CANNOT USE PYARROW FLATTEN AS IT DROPS NULLS
 
     if not bool(pc.any(pc.is_null(array))):
@@ -181,10 +184,7 @@ def _fill_nulls(array: pa.Array, dummy=None) -> pa.Array:
 
 
 def _flatten(array: pa.Array) -> pa.Array:
-    """Return a flatten list array with top level nulls, as pyarrow silently drops them.
-
-    If array is None, use self.array.
-    """
+    """Return a flattened list array preserving top level nulls, as pyarrow silently drops them."""
     arr2, dummy = _fill_nulls(array)
 
     arr2 = arr2.flatten()
@@ -204,8 +204,8 @@ def _array_indices(array: pa.Array) -> pa.Array:
     return pc.list_parent_indices(arr2)
 
 
-def _inner_indices(array, as_list=False):
-    """Return an arrayr or a listarray with values from 0 to length of each array."""
+def _inner_indices(array: pa.Array, as_list: bool = False) -> pa.Array:
+    """Return an array or a listarray with values from 0 to length of each array."""
     final_size = len(array.value_parent_indices())
     value_lengths = array.value_lengths().cast("int64")
     sub_lengths = pc.cumulative_sum(value_lengths)[:-1]
@@ -248,7 +248,7 @@ def _equal(arr1: pa.Array, arr2: pa.Array) -> pa.Array:
 
 
 def _align(array: pa.Array, target: pa.Array) -> pa.Array:
-    """Return array values repeated to match the lenghts of a ListArray."""
+    """Return array values repeated to match the lengths of a ListArray."""
     if len(target) != len(array):
         raise ValueError("Arrays must have the same length")
 
@@ -260,13 +260,14 @@ def _align(array: pa.Array, target: pa.Array) -> pa.Array:
 
 
 def _align_to_lengths(array: pa.Array, lengths: pa.Array) -> pa.Array:
-    """Return array values repeated to match the lenghts array."""
-    np1 = array.to_numpy()
-    np2 = lengths.to_numpy()
-    return pa.array(np.repeat(np1, np2))
+    """Return array values repeated to match the lengths array."""
+    array_numpy = array.to_numpy()
+    lengths_numpy = lengths.to_numpy()
+    return pa.array(np.repeat(array_numpy, lengths_numpy))
 
 
-def _overflow_mask(lengths: pa.Array, position: int) -> pa.Array:
+def _overflow_mask(lengths: pa.Array, position: int | pa.Array | pd.Series) -> pa.Array:
+    """Return mask for positions that overflow array lengths."""
     if isinstance(position, pd.Series):
         pos = position.values
     else:
@@ -276,7 +277,8 @@ def _overflow_mask(lengths: pa.Array, position: int) -> pa.Array:
     return pc.or_(negative, positive)
 
 
-def _get_at(array: pa.Array, position: int) -> pa.Array:
+def _get_at(array: pa.Array, position: int | pa.Array | pd.Series) -> pa.Array:
+    """Get value at position in each sub-array, handling negative indices."""
     lengths = array.value_lengths()
     lengths = pc.fill_null(lengths, 1)
 
@@ -327,7 +329,7 @@ class ArrowListArray:
         self._obj = pandas_obj
 
     def _validate(self, obj):
-        """Validate obj is a series with pyrrow.list_ data."""
+        """Validate obj is a series with pyarrow.list_ data."""
         if not isinstance(obj, pd.Series):
             raise AttributeError("Data must be a pd.Series")
         if not _is_list_series(obj):
@@ -380,12 +382,12 @@ class ArrowListArray:
 
     @cached_property
     def value_lengths(self):
-        """Value lenghts of flattened list array."""
+        """Value lengths of flattened list array."""
         return self.array.value_lengths()
 
     @cached_property
     def length(self):
-        """Lenghts of list array."""
+        """Length of list array."""
         return len(self._obj)
 
     def validate_other(self, other, length=False, scalar=False):
@@ -431,7 +433,9 @@ class ArrowListArray:
             else:
                 raise ValueError("Each array length does not match")
 
-        raise ValueError("Other must be a scalar, a Series of ListArrays or a ListArray")
+        raise ValueError(
+            "Other must be a scalar, a Series of ListArrays or a ListArray"
+        )
 
     # ------------------------------------------------------------------------------------------
     # decorators to pack results
@@ -529,7 +533,9 @@ class ArrowListArray:
 
         if isinstance(aggregator, str):
             aggs = [("values", aggregator)]
-        elif isinstance(aggregator, list) and all([isinstance(x, str) for x in aggregator]):  # noqa: C419
+        elif isinstance(aggregator, list) and all(
+            [isinstance(x, str) for x in aggregator]
+        ):  # noqa: C419
             aggs = [("values", x) for x in aggregator]
         else:
             raise ValueError("aggregator must be a string or a list of strings")
@@ -760,9 +766,13 @@ class ArrowListArray:
         base_index = _align(pa.array(self.index, from_pandas=True), self.array)
         base_index = pc.unique(base_index.filter(flat_mask))
 
-        offsets = _offsets(pd.Series(array_indices, dtype=pd.ArrowDtype(array_indices.type)))
+        offsets = _offsets(
+            pd.Series(array_indices, dtype=pd.ArrowDtype(array_indices.type))
+        )
 
-        res = pa.ListArray.from_arrays(values=ref, offsets=offsets, type=self.array.type)
+        res = pa.ListArray.from_arrays(
+            values=ref, offsets=offsets, type=self.array.type
+        )
         return pd.Series(res, index=base_index, dtype=self.type)
 
     @pack_results
@@ -816,7 +826,9 @@ class ArrowListArray:
 
         # map original data to new format, select values at position
         final_res = self.flat.take(final_take)
-        final_res = pc.if_else(pc.equal(final_indices, final_pos), final_values, final_res)
+        final_res = pc.if_else(
+            pc.equal(final_indices, final_pos), final_values, final_res
+        )
 
         # new offsets
         offsets = pc.add(self.offsets, pa.arange(0, self.length + 1))
