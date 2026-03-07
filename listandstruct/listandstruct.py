@@ -141,12 +141,9 @@ def _offsets(df: pd.Series | pd.DataFrame) -> pa.Array:
     mask = df2 != df2.shift(1)
     if isinstance(df, pd.DataFrame):
         mask = mask.fillna(True)
-        # flatten to one column mask
-        flat_mask = pa.array(mask[df.columns[0]], from_pandas=True)
-        for c in df.columns[1:]:
-            flat_mask = pc.or_(flat_mask, pa.array(mask[c], from_pandas=True))
-
-        offsets = df2.loc[pd.Series(flat_mask, index=df2.index)]
+        # flatten to one column mask using any() for better performance
+        flat_mask = mask.any(axis=1)
+        offsets = df2.loc[flat_mask]
     else:
         offsets = df2.loc[mask]
 
