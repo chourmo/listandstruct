@@ -1,0 +1,7 @@
+{
+    "python.defaultInterpreterPath": "${workspaceFolder}/.pixi/envs/default/bin/python3.14t",
+    "python.analysis.diagnosticMode": "workspace",
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/.pixi/envs/default/lib/python3.14t/site-packages"
+    ]
+}
