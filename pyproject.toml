@@ -16,8 +16,9 @@ python = "3.14.*"
 pandas = "*"
 pyarrow = "*"
 numpy = "*"
-pytest = "*"
+pytest = ">=9.0.2,<10"
 pre-commit = "*"
+rattler-build = ">=0.61.4,<0.62"
 
 [tool.pixi.pypi-dependencies]
 listandstruct = { path = ".", editable = true }
