@@ -3390,7 +3390,7 @@ packages:
 - pypi: ./
   name: listandstruct
   version: 0.0.1
-  sha256: 72a41950d32f07c73ed158a9515cd67ba35032412338ed7a3fa1b13abcc76380
+  sha256: 34bfe1fedf285129406df6bb412f7fc303616d16c1a8793a047986735a608b13
   requires_python: '>=3.14'
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/llvm-openmp-22.1.2-hc7d1edf_0.conda
   sha256: d8acb8e790312346a286f7168380ca3ce86d5982fb073df6e0fbec1e51fa47a1
