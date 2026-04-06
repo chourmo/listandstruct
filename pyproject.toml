@@ -16,12 +16,12 @@ python = "3.14.*"
 pandas = "*"
 pyarrow = "*"
 numpy = "*"
-pytest = ">=9.0.2,<10"
 rattler-build = ">=0.61.4,<0.62"
 
 [tool.pixi.pypi-dependencies]
 listandstruct = { path = ".", editable = true }
 pre-commit = "*"
+pytest = ">=9.0.2,<10"
 
 [tool.pixi.tasks]
 test = "pytest -q"
