@@ -3,5 +3,10 @@
     "python.analysis.diagnosticMode": "workspace",
     "python.analysis.extraPaths": [
         "${workspaceFolder}/.pixi/envs/default/lib/python3.14t/site-packages"
-    ]
+    ],
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
 }
