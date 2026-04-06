@@ -38,8 +38,12 @@ def struct_array(df: pd.DataFrame) -> pa.Array:
     Column dtypes are converted to their PyArrow equivalents automatically.
     """
     names = list(df.columns)
+    # OLD: two passes over columns (values then types)
+    # values = [pa.array(df[col], from_pandas=True) for col in names]
+    # stype = pa.struct({col: df[col].dtype.pyarrow_dtype for col in df.columns})
+    # NEW: single pass — infer struct type from already-converted arrays
     values = [pa.array(df[col], from_pandas=True) for col in names]
-    stype = pa.struct({col: df[col].dtype.pyarrow_dtype for col in df.columns})
+    stype = pa.struct({col: values[i].type for i, col in enumerate(names)})
     structarray = pa.StructArray.from_arrays(arrays=values, type=stype)
     result = pd.Series(structarray, index=df.index, dtype=pd.ArrowDtype(stype))
     return result
@@ -63,12 +67,17 @@ class ArrowStructArray:
 
     def expand(self) -> pd.DataFrame:
         """Convert a Series of StructArray to a DataFrame."""
-        expanded = self._obj.explode()
-        index = expanded.index
-        struct_array = pa.Table.from_struct_array(pa.array(expanded.values))
-        struct_df = struct_array.to_pandas(types_mapper=pd.ArrowDtype)
+        # OLD: unnecessary explode() (no-op on struct series) + round-trip through .values
+        # expanded = self._obj.explode()
+        # index = expanded.index
+        # struct_array = pa.Table.from_struct_array(pa.array(expanded.values))
+        # struct_df = struct_array.to_pandas(types_mapper=pd.ArrowDtype)
+        # struct_df.index = index
+        # NEW: convert directly, skipping the explode and numpy .values round-trip
+        index = self._obj.index
+        struct_table = pa.Table.from_struct_array(pa.array(self._obj, from_pandas=True))
+        struct_df = struct_table.to_pandas(types_mapper=pd.ArrowDtype)
         struct_df.index = index
-
         return struct_df
 
 
@@ -137,18 +146,37 @@ def list_array(
 
 def _offsets(df: pd.Series | pd.DataFrame) -> pa.Array:
     """Return a pyarrow array for offsets where values in df change."""
-    df2 = df.reset_index(drop=True)
-    mask = df2 != df2.shift(1)
-    if isinstance(df, pd.DataFrame):
-        mask = mask.fillna(True)
-        # flatten to one column mask using any() for better performance
-        flat_mask = mask.any(axis=1)
-        offsets = df2.loc[flat_mask]
-    else:
-        offsets = df2.loc[mask]
+    n = len(df)
 
-    offsets = pa.array(offsets.index.astype("int64[pyarrow]").values)
-    offsets = pa.concat_arrays([pa.array([0]), offsets, pa.array([len(df)])])
+    # OLD: pandas-based approach — shift + comparison + index extraction
+    # df2 = df.reset_index(drop=True)
+    # mask = df2 != df2.shift(1)
+    # if isinstance(df, pd.DataFrame):
+    #     mask = mask.fillna(True)
+    #     # flatten to one column mask using any() for better performance
+    #     flat_mask = mask.any(axis=1)
+    #     offsets = df2.loc[flat_mask]
+    # else:
+    #     offsets = df2.loc[mask]
+    # offsets = pa.array(offsets.index.astype("int64[pyarrow]").values)
+    # offsets = pa.concat_arrays([pa.array([0]), offsets, pa.array([len(df)])])
+    # return pc.unique(offsets)
+
+    # NEW: pure PyArrow — compare arr[i] with arr[i-1] directly, no pandas
+    if isinstance(df, pd.DataFrame):
+        columns = [pa.array(df[col], from_pandas=True) for col in df.columns]
+        changes = pc.fill_null(pc.not_equal(columns[0][1:], columns[0][:-1]), True)
+        for col in columns[1:]:
+            changes = pc.or_(changes, pc.fill_null(pc.not_equal(col[1:], col[:-1]), True))
+    else:
+        arr = pa.array(df, from_pandas=True)
+        changes = pc.fill_null(pc.not_equal(arr[1:], arr[:-1]), True)
+
+    indices = pa.arange(1, n)
+    change_indices = indices.filter(changes)
+    offsets = pa.concat_arrays(
+        [pa.array([0], type=pa.int64()), change_indices, pa.array([n], type=pa.int64())]
+    )
     return pc.unique(offsets)
 
 
@@ -187,12 +215,18 @@ def _flatten(array: pa.Array) -> pa.Array:
     arr2 = arr2.flatten()
     if dummy is None:
         return arr2
-    arr2 = pc.fill_null(arr2, dummy)
 
-    # replacing values by na seems impossible in pyarrow, use pandas
-    df = arr2.to_pandas(types_mapper=pd.ArrowDtype)
-    df.loc[df == dummy] = pd.NA
-    return pa.array(df, from_pandas=True)
+    # OLD: fill remaining inner nulls then round-trip through pandas to replace dummy sentinel
+    # arr2 = pc.fill_null(arr2, dummy)
+    # # replacing values by na seems impossible in pyarrow, use pandas
+    # df = arr2.to_pandas(types_mapper=pd.ArrowDtype)
+    # df.loc[df == dummy] = pd.NA
+    # return pa.array(df, from_pandas=True)
+
+    # NEW: replace dummy sentinel directly in PyArrow.
+    # pc.equal returns null when arr2[i] is null, and pc.if_else with a null condition
+    # outputs null — so existing null values within lists are preserved correctly.
+    return pc.if_else(pc.equal(arr2, dummy), pa.scalar(None, type=arr2.type), arr2)
 
 
 def _array_indices(array: pa.Array) -> pa.Array:
@@ -802,7 +836,12 @@ class ArrowListArray:
 
         # inner array indices in final format
         full_indices = pa.arange(0, len(final_pos))
-        shift = pc.cumulative_sum(pa.array([0, *final_lengths.tolist()]))[:-1]
+        # OLD: .tolist() materialises entire array to Python before passing to pa.array()
+        # shift = pc.cumulative_sum(pa.array([0, *final_lengths.tolist()]))[:-1]
+        # NEW: build the prepended array in PyArrow without materialising to Python
+        shift = pc.cumulative_sum(
+            pa.concat_arrays([pa.array([0], type=final_lengths.type), final_lengths])
+        )[:-1]
         shift = _align_to_lengths(shift, final_lengths)
         final_indices = pc.subtract(full_indices, shift)
 
