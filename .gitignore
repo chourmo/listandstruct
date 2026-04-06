@@ -10,3 +10,6 @@ htmlcov/
 .ruff_cache/
 
 .pixi/
+output/
+dist/
+build/
